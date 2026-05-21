@@ -218,6 +218,87 @@ public class TasksControllerTests
     }
 
     [Fact]
+    public async System.Threading.Tasks.Task UpdateTask_UpdatesTask_WhenRequestIsValid()
+    {
+        // Arrange
+        using var context = GetDbContext();
+        var task = new TaskApi.Models.Task
+        {
+            Title = "Original Title",
+            Description = "Original Description",
+            Status = "Pending",
+            DueDate = DateTime.UtcNow.AddDays(1)
+        };
+        context.Tasks.Add(task);
+        await context.SaveChangesAsync();
+
+        var controller = new TasksController(context, GetLogger());
+        var request = new UpdateTaskRequest
+        {
+            Title = "Updated Title",
+            Description = "Updated Description",
+            Status = "Completed",
+            DueDate = DateTime.UtcNow.AddDays(7)
+        };
+
+        // Act
+        var result = await controller.UpdateTask(task.Id, request);
+
+        // Assert
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        var returnedTask = Assert.IsType<TaskResponse>(okResult.Value);
+        Assert.Equal("Updated Title", returnedTask.Title);
+        Assert.Equal("Updated Description", returnedTask.Description);
+        Assert.Equal("Completed", returnedTask.Status);
+        Assert.Equal(request.DueDate, returnedTask.DueDate);
+        Assert.NotNull(returnedTask.UpdatedAt);
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task UpdateTask_ReturnsBadRequest_WhenTitleIsEmpty()
+    {
+        // Arrange
+        using var context = GetDbContext();
+        var task = new TaskApi.Models.Task { Title = "Test Task", Status = "Pending", DueDate = DateTime.UtcNow.AddDays(1) };
+        context.Tasks.Add(task);
+        await context.SaveChangesAsync();
+
+        var controller = new TasksController(context, GetLogger());
+        var request = new UpdateTaskRequest
+        {
+            Title = "",
+            Status = "Completed",
+            DueDate = DateTime.UtcNow.AddDays(2)
+        };
+
+        // Act
+        var result = await controller.UpdateTask(task.Id, request);
+
+        // Assert
+        Assert.IsType<BadRequestObjectResult>(result.Result);
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task UpdateTask_ReturnsNotFound_WhenTaskDoesNotExist()
+    {
+        // Arrange
+        using var context = GetDbContext();
+        var controller = new TasksController(context, GetLogger());
+        var request = new UpdateTaskRequest
+        {
+            Title = "Updated Title",
+            Status = "Completed",
+            DueDate = DateTime.UtcNow.AddDays(2)
+        };
+
+        // Act
+        var result = await controller.UpdateTask(999, request);
+
+        // Assert
+        Assert.IsType<NotFoundObjectResult>(result.Result);
+    }
+
+    [Fact]
     public async System.Threading.Tasks.Task DeleteTask_DeletesTask_WhenTaskExists()
     {
         // Arrange

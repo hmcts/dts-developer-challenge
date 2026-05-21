@@ -10,6 +10,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@emotion/react": "^11.12.0",
+    "@emotion/styled": "^11.12.0",
+    "@mui/material": "^5.14.0",
+    "@mui/x-data-grid": "^6.20.4",
+    "@mui/x-date-pickers": "^6.20.2",
+    "date-fns": "^2.30.0",
     "react": "^19.2.5",
     "react-dom": "^19.2.5"
   },
