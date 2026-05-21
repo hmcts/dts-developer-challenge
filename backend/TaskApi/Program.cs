@@ -1,5 +1,7 @@
 using TaskApi.Data;
+using TaskApi.Interfaces;
 using Microsoft.EntityFrameworkCore;
+using TaskApi.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -11,6 +13,7 @@ builder.Services.AddControllers();
 builder.Services.AddDbContext<TaskDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection") 
         ?? "Data Source=tasks.db"));
+builder.Services.AddScoped<ITaskService, TaskService>();
 
 // Add CORS for frontend
 builder.Services.AddCors(options =>

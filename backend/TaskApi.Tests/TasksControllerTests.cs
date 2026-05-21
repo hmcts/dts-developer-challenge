@@ -1,109 +1,59 @@
-using Microsoft.EntityFrameworkCore;
-using TaskApi.Controllers;
-using TaskApi.Data;
-using TaskApi.DTOs;
-using TaskApi.Models;
-using Xunit;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Logging;
 using Moq;
+using TaskApi.Controllers;
+using TaskApi.DTOs;
+using TaskApi.Interfaces;
+using TaskApi.Services;
+using Xunit;
 
 namespace TaskApi.Tests;
 
 public class TasksControllerTests
 {
-    private TaskDbContext GetDbContext()
+    private static TasksController CreateController(Mock<ITaskService> taskServiceMock)
     {
-        var options = new DbContextOptionsBuilder<TaskDbContext>()
-            .UseInMemoryDatabase(Guid.NewGuid().ToString())
-            .Options;
-
-        return new TaskDbContext(options);
-    }
-
-    private ILogger<TasksController> GetLogger()
-    {
-        return new Mock<ILogger<TasksController>>().Object;
+        return new TasksController(taskServiceMock.Object);
     }
 
     [Fact]
-    public async System.Threading.Tasks.Task GetAllTasks_ReturnsEmptyList_WhenNoTasksExist()
+    public async System.Threading.Tasks.Task GetAllTasks_ReturnsOkWithTasks()
     {
-        // Arrange
-        using var context = GetDbContext();
-        var controller = new TasksController(context, GetLogger());
+        var taskServiceMock = new Mock<ITaskService>();
+        taskServiceMock
+            .Setup(service => service.GetAllTasksAsync())
+            .ReturnsAsync(new List<TaskResponse>
+            {
+                new() { Id = 1, Title = "Task 1", Status = "Pending", DueDate = DateTime.UtcNow },
+                new() { Id = 2, Title = "Task 2", Status = "Completed", DueDate = DateTime.UtcNow }
+            });
 
-        // Act
+        var controller = CreateController(taskServiceMock);
+
         var result = await controller.GetAllTasks();
 
-        // Assert
-        var okResult = Assert.IsType<OkObjectResult>(result.Result);
-        var returnedTasks = Assert.IsType<List<TaskResponse>>(okResult.Value);
-        Assert.Empty(returnedTasks);
-    }
-
-    [Fact]
-    public async System.Threading.Tasks.Task GetAllTasks_ReturnsAllTasks_WhenTasksExist()
-    {
-        // Arrange
-        using var context = GetDbContext();
-        var task1 = new TaskApi.Models.Task { Title = "Task 1", Status = "Pending", DueDate = DateTime.UtcNow.AddDays(1) };
-        var task2 = new TaskApi.Models.Task { Title = "Task 2", Status = "In Progress", DueDate = DateTime.UtcNow.AddDays(2) };
-        context.Tasks.Add(task1);
-        context.Tasks.Add(task2);
-        await context.SaveChangesAsync();
-
-        var controller = new TasksController(context, GetLogger());
-
-        // Act
-        var result = await controller.GetAllTasks();
-
-        // Assert
         var okResult = Assert.IsType<OkObjectResult>(result.Result);
         var returnedTasks = Assert.IsType<List<TaskResponse>>(okResult.Value);
         Assert.Equal(2, returnedTasks.Count);
     }
 
     [Fact]
-    public async System.Threading.Tasks.Task GetTaskById_ReturnsTask_WhenTaskExists()
+    public async System.Threading.Tasks.Task GetTaskById_ReturnsNotFound_WhenServiceReturnsNotFound()
     {
-        // Arrange
-        using var context = GetDbContext();
-        var task = new TaskApi.Models.Task { Title = "Test Task", Status = "Pending", DueDate = DateTime.UtcNow.AddDays(1) };
-        context.Tasks.Add(task);
-        await context.SaveChangesAsync();
+        var taskServiceMock = new Mock<ITaskService>();
+        taskServiceMock
+            .Setup(service => service.GetTaskByIdAsync(999))
+            .ReturnsAsync(ServiceResult<TaskResponse>.Failure(ServiceErrorCodes.NotFound, "Task with ID 999 not found"));
 
-        var controller = new TasksController(context, GetLogger());
+        var controller = CreateController(taskServiceMock);
 
-        // Act
-        var result = await controller.GetTaskById(task.Id);
-
-        // Assert
-        var okResult = Assert.IsType<OkObjectResult>(result.Result);
-        var returnedTask = Assert.IsType<TaskResponse>(okResult.Value);
-        Assert.Equal(task.Title, returnedTask.Title);
-    }
-
-    [Fact]
-    public async System.Threading.Tasks.Task GetTaskById_ReturnsNotFound_WhenTaskDoesNotExist()
-    {
-        // Arrange
-        using var context = GetDbContext();
-        var controller = new TasksController(context, GetLogger());
-
-        // Act
         var result = await controller.GetTaskById(999);
 
-        // Assert
         Assert.IsType<NotFoundObjectResult>(result.Result);
     }
 
     [Fact]
-    public async System.Threading.Tasks.Task CreateTask_CreatesTask_WithValidRequest()
+    public async System.Threading.Tasks.Task CreateTask_ReturnsCreatedAtAction_WhenServiceSucceeds()
     {
-        // Arrange
-        using var context = GetDbContext();
-        var controller = new TasksController(context, GetLogger());
         var request = new CreateTaskRequest
         {
             Title = "New Task",
@@ -112,158 +62,71 @@ public class TasksControllerTests
             DueDate = DateTime.UtcNow.AddDays(1)
         };
 
-        // Act
+        var taskServiceMock = new Mock<ITaskService>();
+        taskServiceMock
+            .Setup(service => service.CreateTaskAsync(request))
+            .ReturnsAsync(ServiceResult<TaskResponse>.Success(new TaskResponse
+            {
+                Id = 1,
+                Title = request.Title,
+                Description = request.Description,
+                Status = request.Status,
+                DueDate = request.DueDate
+            }));
+
+        var controller = CreateController(taskServiceMock);
+
         var result = await controller.CreateTask(request);
 
-        // Assert
         var createdResult = Assert.IsType<CreatedAtActionResult>(result.Result);
         Assert.Equal(nameof(TasksController.GetTaskById), createdResult.ActionName);
-        
         var returnedTask = Assert.IsType<TaskResponse>(createdResult.Value);
-        Assert.Equal("New Task", returnedTask.Title);
-        Assert.Equal("Test Description", returnedTask.Description);
+        Assert.Equal(request.Title, returnedTask.Title);
     }
 
     [Fact]
-    public async System.Threading.Tasks.Task CreateTask_ReturnsBadRequest_WhenTitleIsEmpty()
+    public async System.Threading.Tasks.Task CreateTask_ReturnsBadRequest_WhenServiceValidationFails()
     {
-        // Arrange
-        using var context = GetDbContext();
-        var controller = new TasksController(context, GetLogger());
-        var request = new CreateTaskRequest
-        {
-            Title = "",
-            DueDate = DateTime.UtcNow.AddDays(1)
-        };
+        var request = new CreateTaskRequest { Title = "", DueDate = DateTime.UtcNow.AddDays(1) };
+        var taskServiceMock = new Mock<ITaskService>();
+        taskServiceMock
+            .Setup(service => service.CreateTaskAsync(request))
+            .ReturnsAsync(ServiceResult<TaskResponse>.Failure(ServiceErrorCodes.Validation, "Title is required"));
 
-        // Act
+        var controller = CreateController(taskServiceMock);
+
         var result = await controller.CreateTask(request);
 
-        // Assert
         Assert.IsType<BadRequestObjectResult>(result.Result);
     }
 
     [Fact]
-    public async System.Threading.Tasks.Task CreateTask_ReturnsBadRequest_WhenDueDateIsDefault()
+    public async System.Threading.Tasks.Task UpdateTaskStatus_ReturnsOk_WhenServiceSucceeds()
     {
-        // Arrange
-        using var context = GetDbContext();
-        var controller = new TasksController(context, GetLogger());
-        var request = new CreateTaskRequest
-        {
-            Title = "New Task",
-            DueDate = default
-        };
-
-        // Act
-        var result = await controller.CreateTask(request);
-
-        // Assert
-        Assert.IsType<BadRequestObjectResult>(result.Result);
-    }
-
-    [Fact]
-    public async System.Threading.Tasks.Task UpdateTaskStatus_UpdatesStatus_WhenTaskExists()
-    {
-        // Arrange
-        using var context = GetDbContext();
-        var task = new TaskApi.Models.Task { Title = "Test Task", Status = "Pending", DueDate = DateTime.UtcNow.AddDays(1) };
-        context.Tasks.Add(task);
-        await context.SaveChangesAsync();
-
-        var controller = new TasksController(context, GetLogger());
         var request = new UpdateTaskStatusRequest { Status = "Completed" };
+        var taskServiceMock = new Mock<ITaskService>();
+        taskServiceMock
+            .Setup(service => service.UpdateTaskStatusAsync(1, request))
+            .ReturnsAsync(ServiceResult<TaskResponse>.Success(new TaskResponse
+            {
+                Id = 1,
+                Title = "Task 1",
+                Status = "Completed",
+                DueDate = DateTime.UtcNow
+            }));
 
-        // Act
-        var result = await controller.UpdateTaskStatus(task.Id, request);
+        var controller = CreateController(taskServiceMock);
 
-        // Assert
+        var result = await controller.UpdateTaskStatus(1, request);
+
         var okResult = Assert.IsType<OkObjectResult>(result.Result);
         var returnedTask = Assert.IsType<TaskResponse>(okResult.Value);
         Assert.Equal("Completed", returnedTask.Status);
     }
 
     [Fact]
-    public async System.Threading.Tasks.Task UpdateTaskStatus_ReturnsNotFound_WhenTaskDoesNotExist()
+    public async System.Threading.Tasks.Task UpdateTask_ReturnsBadRequest_WhenServiceValidationFails()
     {
-        // Arrange
-        using var context = GetDbContext();
-        var controller = new TasksController(context, GetLogger());
-        var request = new UpdateTaskStatusRequest { Status = "Completed" };
-
-        // Act
-        var result = await controller.UpdateTaskStatus(999, request);
-
-        // Assert
-        Assert.IsType<NotFoundObjectResult>(result.Result);
-    }
-
-    [Fact]
-    public async System.Threading.Tasks.Task UpdateTaskStatus_ReturnsBadRequest_WhenStatusIsEmpty()
-    {
-        // Arrange
-        using var context = GetDbContext();
-        var task = new TaskApi.Models.Task { Title = "Test Task", Status = "Pending", DueDate = DateTime.UtcNow.AddDays(1) };
-        context.Tasks.Add(task);
-        await context.SaveChangesAsync();
-
-        var controller = new TasksController(context, GetLogger());
-        var request = new UpdateTaskStatusRequest { Status = "" };
-
-        // Act
-        var result = await controller.UpdateTaskStatus(task.Id, request);
-
-        // Assert
-        Assert.IsType<BadRequestObjectResult>(result.Result);
-    }
-
-    [Fact]
-    public async System.Threading.Tasks.Task UpdateTask_UpdatesTask_WhenRequestIsValid()
-    {
-        // Arrange
-        using var context = GetDbContext();
-        var task = new TaskApi.Models.Task
-        {
-            Title = "Original Title",
-            Description = "Original Description",
-            Status = "Pending",
-            DueDate = DateTime.UtcNow.AddDays(1)
-        };
-        context.Tasks.Add(task);
-        await context.SaveChangesAsync();
-
-        var controller = new TasksController(context, GetLogger());
-        var request = new UpdateTaskRequest
-        {
-            Title = "Updated Title",
-            Description = "Updated Description",
-            Status = "Completed",
-            DueDate = DateTime.UtcNow.AddDays(7)
-        };
-
-        // Act
-        var result = await controller.UpdateTask(task.Id, request);
-
-        // Assert
-        var okResult = Assert.IsType<OkObjectResult>(result.Result);
-        var returnedTask = Assert.IsType<TaskResponse>(okResult.Value);
-        Assert.Equal("Updated Title", returnedTask.Title);
-        Assert.Equal("Updated Description", returnedTask.Description);
-        Assert.Equal("Completed", returnedTask.Status);
-        Assert.Equal(request.DueDate, returnedTask.DueDate);
-        Assert.NotNull(returnedTask.UpdatedAt);
-    }
-
-    [Fact]
-    public async System.Threading.Tasks.Task UpdateTask_ReturnsBadRequest_WhenTitleIsEmpty()
-    {
-        // Arrange
-        using var context = GetDbContext();
-        var task = new TaskApi.Models.Task { Title = "Test Task", Status = "Pending", DueDate = DateTime.UtcNow.AddDays(1) };
-        context.Tasks.Add(task);
-        await context.SaveChangesAsync();
-
-        var controller = new TasksController(context, GetLogger());
         var request = new UpdateTaskRequest
         {
             Title = "",
@@ -271,66 +134,45 @@ public class TasksControllerTests
             DueDate = DateTime.UtcNow.AddDays(2)
         };
 
-        // Act
-        var result = await controller.UpdateTask(task.Id, request);
+        var taskServiceMock = new Mock<ITaskService>();
+        taskServiceMock
+            .Setup(service => service.UpdateTaskAsync(1, request))
+            .ReturnsAsync(ServiceResult<TaskResponse>.Failure(ServiceErrorCodes.Validation, "Title is required"));
 
-        // Assert
+        var controller = CreateController(taskServiceMock);
+
+        var result = await controller.UpdateTask(1, request);
+
         Assert.IsType<BadRequestObjectResult>(result.Result);
     }
 
     [Fact]
-    public async System.Threading.Tasks.Task UpdateTask_ReturnsNotFound_WhenTaskDoesNotExist()
+    public async System.Threading.Tasks.Task DeleteTask_ReturnsNoContent_WhenServiceSucceeds()
     {
-        // Arrange
-        using var context = GetDbContext();
-        var controller = new TasksController(context, GetLogger());
-        var request = new UpdateTaskRequest
-        {
-            Title = "Updated Title",
-            Status = "Completed",
-            DueDate = DateTime.UtcNow.AddDays(2)
-        };
+        var taskServiceMock = new Mock<ITaskService>();
+        taskServiceMock
+            .Setup(service => service.DeleteTaskAsync(1))
+            .ReturnsAsync(ServiceResult.Success());
 
-        // Act
-        var result = await controller.UpdateTask(999, request);
+        var controller = CreateController(taskServiceMock);
 
-        // Assert
-        Assert.IsType<NotFoundObjectResult>(result.Result);
-    }
+        var result = await controller.DeleteTask(1);
 
-    [Fact]
-    public async System.Threading.Tasks.Task DeleteTask_DeletesTask_WhenTaskExists()
-    {
-        // Arrange
-        using var context = GetDbContext();
-        var task = new TaskApi.Models.Task { Title = "Test Task", Status = "Pending", DueDate = DateTime.UtcNow.AddDays(1) };
-        context.Tasks.Add(task);
-        await context.SaveChangesAsync();
-
-        var controller = new TasksController(context, GetLogger());
-
-        // Act
-        var result = await controller.DeleteTask(task.Id);
-
-        // Assert
         Assert.IsType<NoContentResult>(result);
-        
-        // Verify task is deleted
-        var deletedTask = await context.Tasks.FindAsync(task.Id);
-        Assert.Null(deletedTask);
     }
 
     [Fact]
-    public async System.Threading.Tasks.Task DeleteTask_ReturnsNotFound_WhenTaskDoesNotExist()
+    public async System.Threading.Tasks.Task DeleteTask_ReturnsNotFound_WhenServiceReturnsNotFound()
     {
-        // Arrange
-        using var context = GetDbContext();
-        var controller = new TasksController(context, GetLogger());
+        var taskServiceMock = new Mock<ITaskService>();
+        taskServiceMock
+            .Setup(service => service.DeleteTaskAsync(999))
+            .ReturnsAsync(ServiceResult.Failure(ServiceErrorCodes.NotFound, "Task with ID 999 not found"));
 
-        // Act
+        var controller = CreateController(taskServiceMock);
+
         var result = await controller.DeleteTask(999);
 
-        // Assert
         Assert.IsType<NotFoundObjectResult>(result);
     }
 }

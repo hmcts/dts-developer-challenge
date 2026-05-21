@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using TaskApi.Data;
 using TaskApi.DTOs;
+using TaskApi.Interfaces;
+using TaskApi.Services;
 
 namespace TaskApi.Controllers;
 
@@ -9,13 +9,11 @@ namespace TaskApi.Controllers;
 [Route("api/[controller]")]
 public class TasksController : ControllerBase
 {
-    private readonly TaskDbContext _context;
-    private readonly ILogger<TasksController> _logger;
+    private readonly ITaskService _taskService;
 
-    public TasksController(TaskDbContext context, ILogger<TasksController> logger)
+    public TasksController(ITaskService taskService)
     {
-        _context = context;
-        _logger = logger;
+        _taskService = taskService;
     }
 
     /// <summary>
@@ -26,21 +24,7 @@ public class TasksController : ControllerBase
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<ActionResult<IEnumerable<TaskResponse>>> GetAllTasks()
     {
-        _logger.LogInformation("Retrieving all tasks");
-        var tasks = await _context.Tasks
-            .AsNoTracking()
-            .Select(task => new TaskResponse
-            {
-                Id = task.Id,
-                Title = task.Title,
-                Description = task.Description,
-                Status = task.Status,
-                DueDate = task.DueDate,
-                CreatedAt = task.CreatedAt,
-                UpdatedAt = task.UpdatedAt
-            })
-            .ToListAsync();
-
+        var tasks = await _taskService.GetAllTasksAsync();
         return Ok(tasks);
     }
 
@@ -54,16 +38,8 @@ public class TasksController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<TaskResponse>> GetTaskById(int id)
     {
-        _logger.LogInformation("Retrieving task with ID: {TaskId}", id);
-        var task = await _context.Tasks.FindAsync(id);
-
-        if (task == null)
-        {
-            _logger.LogWarning("Task with ID {TaskId} not found", id);
-            return NotFound(new { message = $"Task with ID {id} not found" });
-        }
-
-        return Ok(MapToTaskResponse(task));
+        var result = await _taskService.GetTaskByIdAsync(id);
+        return ToActionResult(result);
     }
 
     /// <summary>
@@ -76,34 +52,13 @@ public class TasksController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<TaskResponse>> CreateTask(CreateTaskRequest request)
     {
-        _logger.LogInformation("Creating new task with title: {Title}", request.Title);
-
-        if (string.IsNullOrWhiteSpace(request.Title))
+        var result = await _taskService.CreateTaskAsync(request);
+        if (!result.IsSuccess)
         {
-            _logger.LogWarning("Task creation failed: Title is required");
-            return BadRequest(new { message = "Title is required" });
+            return ToActionResult(result);
         }
 
-        if (request.DueDate == default)
-        {
-            _logger.LogWarning("Task creation failed: DueDate is required");
-            return BadRequest(new { message = "DueDate is required" });
-        }
-
-        var task = new Models.Task
-        {
-            Title = request.Title,
-            Description = request.Description,
-            Status = string.IsNullOrWhiteSpace(request.Status) ? "Pending" : request.Status,
-            DueDate = request.DueDate,
-            CreatedAt = DateTime.UtcNow
-        };
-
-        _context.Tasks.Add(task);
-        await _context.SaveChangesAsync();
-
-        _logger.LogInformation("Task created successfully with ID: {TaskId}", task.Id);
-        return CreatedAtAction(nameof(GetTaskById), new { id = task.Id }, MapToTaskResponse(task));
+        return CreatedAtAction(nameof(GetTaskById), new { id = result.Data!.Id }, result.Data);
     }
 
     /// <summary>
@@ -118,30 +73,8 @@ public class TasksController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<TaskResponse>> UpdateTaskStatus(int id, UpdateTaskStatusRequest request)
     {
-        _logger.LogInformation("Updating status for task ID: {TaskId}", id);
-
-        if (string.IsNullOrWhiteSpace(request.Status))
-        {
-            _logger.LogWarning("Status update failed: Status is required");
-            return BadRequest(new { message = "Status is required" });
-        }
-
-        var task = await _context.Tasks.FindAsync(id);
-
-        if (task == null)
-        {
-            _logger.LogWarning("Task with ID {TaskId} not found", id);
-            return NotFound(new { message = $"Task with ID {id} not found" });
-        }
-
-        task.Status = request.Status;
-        task.UpdatedAt = DateTime.UtcNow;
-
-        _context.Tasks.Update(task);
-        await _context.SaveChangesAsync();
-
-        _logger.LogInformation("Task {TaskId} status updated to {Status}", id, request.Status);
-        return Ok(MapToTaskResponse(task));
+        var result = await _taskService.UpdateTaskStatusAsync(id, request);
+        return ToActionResult(result);
     }
 
     /// <summary>
@@ -156,39 +89,8 @@ public class TasksController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<TaskResponse>> UpdateTask(int id, UpdateTaskRequest request)
     {
-        _logger.LogInformation("Updating task with ID: {TaskId}", id);
-
-        if (string.IsNullOrWhiteSpace(request.Title))
-        {
-            _logger.LogWarning("Task update failed: Title is required");
-            return BadRequest(new { message = "Title is required" });
-        }
-
-        if (request.DueDate == default)
-        {
-            _logger.LogWarning("Task update failed: DueDate is required");
-            return BadRequest(new { message = "DueDate is required" });
-        }
-
-        var task = await _context.Tasks.FindAsync(id);
-
-        if (task == null)
-        {
-            _logger.LogWarning("Task with ID {TaskId} not found", id);
-            return NotFound(new { message = $"Task with ID {id} not found" });
-        }
-
-        task.Title = request.Title;
-        task.Description = request.Description;
-        task.Status = string.IsNullOrWhiteSpace(request.Status) ? "Pending" : request.Status;
-        task.DueDate = request.DueDate;
-        task.UpdatedAt = DateTime.UtcNow;
-
-        _context.Tasks.Update(task);
-        await _context.SaveChangesAsync();
-
-        _logger.LogInformation("Task {TaskId} updated successfully", id);
-        return Ok(MapToTaskResponse(task));
+        var result = await _taskService.UpdateTaskAsync(id, request);
+        return ToActionResult(result);
     }
 
     /// <summary>
@@ -201,34 +103,37 @@ public class TasksController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult> DeleteTask(int id)
     {
-        _logger.LogInformation("Deleting task with ID: {TaskId}", id);
-
-        var task = await _context.Tasks.FindAsync(id);
-
-        if (task == null)
+        var result = await _taskService.DeleteTaskAsync(id);
+        if (!result.IsSuccess)
         {
-            _logger.LogWarning("Task with ID {TaskId} not found", id);
-            return NotFound(new { message = $"Task with ID {id} not found" });
+            return ToActionResult(result);
         }
 
-        _context.Tasks.Remove(task);
-        await _context.SaveChangesAsync();
-
-        _logger.LogInformation("Task {TaskId} deleted successfully", id);
         return NoContent();
     }
 
-    private static TaskResponse MapToTaskResponse(Models.Task task)
+    private ActionResult<TaskResponse> ToActionResult(ServiceResult<TaskResponse> result)
     {
-        return new TaskResponse
+        if (result.IsSuccess)
         {
-            Id = task.Id,
-            Title = task.Title,
-            Description = task.Description,
-            Status = task.Status,
-            DueDate = task.DueDate,
-            CreatedAt = task.CreatedAt,
-            UpdatedAt = task.UpdatedAt
+            return Ok(result.Data);
+        }
+
+        return result.Error?.Code switch
+        {
+            ServiceErrorCodes.Validation => BadRequest(new { message = result.Error.Message }),
+            ServiceErrorCodes.NotFound => NotFound(new { message = result.Error.Message }),
+            _ => StatusCode(StatusCodes.Status500InternalServerError)
+        };
+    }
+
+    private ActionResult ToActionResult(ServiceResult result)
+    {
+        return result.Error?.Code switch
+        {
+            ServiceErrorCodes.Validation => BadRequest(new { message = result.Error!.Message }),
+            ServiceErrorCodes.NotFound => NotFound(new { message = result.Error!.Message }),
+            _ => StatusCode(StatusCodes.Status500InternalServerError)
         };
     }
 }
